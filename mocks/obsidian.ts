@@ -155,6 +155,11 @@ export class MetadataCache {
 }
 
 export class Workspace {
+  _rootLeaves: WorkspaceLeaf[] = [];
+  _mostRecentLeaf: WorkspaceLeaf | null = null;
+  _lastOpenFiles: string[] = [];
+  _activeFile: TFile | null = null;
+
   async openLinkText(
     path: string,
     base: string,
@@ -163,9 +168,65 @@ export class Workspace {
     return new Promise((resolve, reject) => resolve());
   }
 
-  getActiveFile(): TFile {
-    return new TFile();
+  getActiveFile(): TFile | null {
+    return this._activeFile;
   }
+
+  iterateRootLeaves(callback: (leaf: WorkspaceLeaf) => void): void {
+    for (const leaf of this._rootLeaves) callback(leaf);
+  }
+
+  getMostRecentLeaf(): WorkspaceLeaf | null {
+    return this._mostRecentLeaf;
+  }
+
+  getLastOpenFiles(): string[] {
+    return this._lastOpenFiles;
+  }
+}
+
+export class View {
+  _viewType = "markdown";
+  getViewType(): string {
+    return this._viewType;
+  }
+}
+
+export class FileView extends View {
+  file: TFile | null = null;
+}
+
+export class TextFileView extends FileView {}
+
+export class Editor {
+  _selections: { anchor: { line: number; ch: number }; head: { line: number; ch: number } }[] = [];
+  _cursor = { line: 0, ch: 0 };
+
+  listSelections(): { anchor: { line: number; ch: number }; head: { line: number; ch: number } }[] {
+    return this._selections;
+  }
+
+  getCursor(): { line: number; ch: number } {
+    return this._cursor;
+  }
+}
+
+export class MarkdownView extends TextFileView {
+  _mode: "source" | "preview" = "source";
+  editor = new Editor();
+
+  constructor() {
+    super();
+    this._viewType = "markdown";
+  }
+
+  getMode(): "source" | "preview" {
+    return this._mode;
+  }
+}
+
+export class WorkspaceLeaf {
+  view: View = new View();
 }
 
 export class App {

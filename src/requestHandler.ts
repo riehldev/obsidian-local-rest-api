@@ -1266,6 +1266,10 @@ export default class RequestHandler {
     res.json();
   }
 
+  async workspaceGet(_req: express.Request, res: express.Response): Promise<void> {
+    res.json(this.operations.getWorkspaceState());
+  }
+
   private parseGraphBody(req: express.Request): Record<string, unknown> {
     const body: unknown = req.body;
     if (body == null) return {};
@@ -1571,6 +1575,8 @@ export default class RequestHandler {
     this.api.route("/graph/orphans/").post((rq, rs) => { void this.graphOrphansPost(rq, rs); });
     this.api.route("/graph/neighborhood/").post((rq, rs) => { void this.graphNeighborhoodPost(rq, rs); });
     this.api.route("/graph/hubs/").post((rq, rs) => { void this.graphHubsPost(rq, rs); });
+
+    this.api.route("/workspace/").get((rq, rs) => { void this.workspaceGet(rq, rs); });
 
     this.api.route("/open/*").post((rq, rs) => { void this.openPost(rq, rs); });
 

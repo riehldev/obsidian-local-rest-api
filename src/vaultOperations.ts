@@ -3,8 +3,11 @@ import {
   App,
   CachedMetadata,
   Command,
+  FileView,
+  MarkdownView,
   prepareSimpleSearch,
   TFile,
+  WorkspaceLeaf,
 } from "obsidian";
 import periodicNotes from "obsidian-daily-notes-interface";
 import path from "path";
@@ -39,6 +42,9 @@ import {
   SearchContext,
   SearchJsonResponseItem,
   SearchResponseItem,
+  WorkspaceFocusedDetail,
+  WorkspaceState,
+  WorkspaceTab,
 } from "./types";
 import { toArrayBuffer } from "./utils";
 
@@ -597,6 +603,28 @@ export class VaultOperations {
   }
 
   // ---------------------------------------------------------------------------
+  // Workspace state
+  // ---------------------------------------------------------------------------
+
+  getWorkspaceState(): WorkspaceState {
+    const focusedLeaf = this.app.workspace.getMostRecentLeaf() ?? null;
+    const tabs: WorkspaceTab[] = [];
+    this.app.workspace.iterateRootLeaves((leaf) => {
+      tabs.push({
+        path: extractLeafPath(leaf),
+        viewType: leaf.view.getViewType(),
+        isFocused: leaf === focusedLeaf,
+      });
+    });
+    return {
+      focused: focusedLeaf ? buildFocusedDetail(focusedLeaf) : null,
+      tabs,
+      recentFiles: this.app.workspace.getLastOpenFiles(),
+      mostRecentActiveFile: this.app.workspace.getActiveFile()?.path ?? null,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Graph operations
   // ---------------------------------------------------------------------------
 
@@ -816,4 +844,44 @@ function collapseAndTruncate(input: string, maxChars: number): string {
   const collapsed = input.replace(/\s+/g, " ").trim();
   if (collapsed.length <= maxChars) return collapsed;
   return collapsed.slice(0, maxChars);
+}
+
+export function extractLeafPath(leaf: WorkspaceLeaf): string | null {
+  const view = leaf.view;
+  if (view instanceof FileView && view.file) return view.file.path;
+  return null;
+}
+
+export function buildFocusedDetail(leaf: WorkspaceLeaf): WorkspaceFocusedDetail {
+  const view = leaf.view;
+  const detail: WorkspaceFocusedDetail = {
+    path: extractLeafPath(leaf),
+    viewType: view.getViewType(),
+  };
+  if (view instanceof MarkdownView) {
+    const mode = view.getMode();
+    if (mode === "source" || mode === "preview") {
+      detail.mode = mode;
+    }
+    if (mode === "source") {
+      const editor = view.editor;
+      const selections = editor.listSelections();
+      const primary = selections.length > 0 ? selections[0] : null;
+      if (primary) {
+        detail.cursor = { line: primary.head.line, ch: primary.head.ch };
+        const sameLine = primary.anchor.line === primary.head.line;
+        const sameCh = primary.anchor.ch === primary.head.ch;
+        if (!(sameLine && sameCh)) {
+          detail.selection = {
+            anchor: { line: primary.anchor.line, ch: primary.anchor.ch },
+            head: { line: primary.head.line, ch: primary.head.ch },
+          };
+        }
+      } else {
+        const cursor = editor.getCursor();
+        detail.cursor = { line: cursor.line, ch: cursor.ch };
+      }
+    }
+  }
+  return detail;
 }

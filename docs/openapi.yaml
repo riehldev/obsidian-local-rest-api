@@ -4059,6 +4059,125 @@ paths:
         List files that exist in the specified directory.
       tags:
         - "Vault Directories"
+  /workspace/:
+    get:
+      description: |
+        Return a live snapshot of the Obsidian workspace UI state — what tab is focused, what other tabs are open in the main area, where the cursor is, and which files were recently opened.
+        
+        This is the preferred replacement for the older `/active/` GET endpoint when you need to know what the user is actually doing right now, rather than just reading the active file's content. Unlike `getActiveFile()`, this endpoint reports useful information even when the currently focused tab is not a file (terminal, settings, graph view, etc.).
+        
+        ### What's included
+        
+        - **`focused`** — detail about the currently focused main-area leaf. `null` when no main-area leaves exist. When focused on a markdown file, includes `cursor` and, if a non-empty selection exists, `selection`. Preview-mode markdown views omit cursor info (there is no editor in preview mode).
+        - **`tabs`** — flat array of every leaf in the main area, with `viewType`, `path` (`null` for non-file views), and `isFocused`. Sidebar leaves (file explorer, outline, backlinks pane, etc.) are intentionally not included.
+        - **`recentFiles`** — vault-relative paths of up to 10 most recently opened files.
+        - **`mostRecentActiveFile`** — vault path of the most recently active `FileView`, falling back across non-file tabs. Useful for "what file was the user just on" regardless of current focus.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  focused:
+                    nullable: true
+                    properties:
+                      cursor:
+                        description: "Cursor position. Present for MarkdownView in source mode only."
+                        properties:
+                          ch:
+                            type: "number"
+                          line:
+                            type: "number"
+                        required:
+                          - "line"
+                          - "ch"
+                        type: "object"
+                      mode:
+                        description: "Markdown view mode. Present only for MarkdownView."
+                        enum:
+                          - "source"
+                          - "preview"
+                        type: "string"
+                      path:
+                        description: "Vault-relative path of the focused file, or null when the focused leaf is not a FileView."
+                        nullable: true
+                        type: "string"
+                      selection:
+                        description: "Selection range. Present only when a non-empty selection exists in a MarkdownView source-mode editor."
+                        properties:
+                          anchor:
+                            properties:
+                              ch:
+                                type: "number"
+                              line:
+                                type: "number"
+                            required:
+                              - "line"
+                              - "ch"
+                            type: "object"
+                          head:
+                            properties:
+                              ch:
+                                type: "number"
+                              line:
+                                type: "number"
+                            required:
+                              - "line"
+                              - "ch"
+                            type: "object"
+                        required:
+                          - "anchor"
+                          - "head"
+                        type: "object"
+                      viewType:
+                        description: "Obsidian view type identifier (e.g. 'markdown', 'image', 'pdf', 'graph')."
+                        type: "string"
+                    required:
+                      - "path"
+                      - "viewType"
+                    type: "object"
+                  mostRecentActiveFile:
+                    description: "Vault path of the most recently active FileView; falls back across non-file tabs. Null if no file has ever been active."
+                    nullable: true
+                    type: "string"
+                  recentFiles:
+                    description: "Vault-relative paths of up to 10 most recently opened files."
+                    items:
+                      type: "string"
+                    type: "array"
+                  tabs:
+                    items:
+                      properties:
+                        isFocused:
+                          type: "boolean"
+                        path:
+                          nullable: true
+                          type: "string"
+                        viewType:
+                          type: "string"
+                      required:
+                        - "path"
+                        - "viewType"
+                        - "isFocused"
+                      type: "object"
+                    type: "array"
+                required:
+                  - "focused"
+                  - "tabs"
+                  - "recentFiles"
+                  - "mostRecentActiveFile"
+                type: "object"
+          description: "Success."
+        "401":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "API key required."
+      summary: |
+        Return a snapshot of the Obsidian workspace UI state.
+      tags:
+        - "Workspace"
 security:
   - apiKeyAuth: []
 servers:
@@ -4087,6 +4206,7 @@ tags:
   - name: "Vault Directories"
   - name: "Search"
   - name: "Graph"
+  - name: "Workspace"
   - name: "Commands"
   - name: "Open"
   - name: "System"

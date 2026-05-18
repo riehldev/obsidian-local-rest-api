@@ -529,6 +529,31 @@ export class McpHandler {
       "notes and noise for others.";
 
     this.tool(
+      "workspace_get",
+      "Return a snapshot of the current Obsidian workspace UI state. Use this " +
+        "to find out what file the user is actually looking at, where their cursor is, " +
+        "and what other tabs they have open.\n\n" +
+        "This is the preferred replacement for active_file_get_path: it works even when " +
+        "the focused tab is not a file (e.g. terminal, settings, graph view), and it " +
+        "returns richer detail when a markdown file IS focused.\n\n" +
+        "Returns an object with:\n" +
+        "- focused: detail about the currently focused tab in the main area, or null if " +
+        "there are no main-area leaves. Includes path (null for non-file views), viewType, " +
+        "mode ('source' or 'preview', markdown only), cursor ({line, ch}, markdown source " +
+        "mode only), and selection ({anchor, head}, only when a selection exists).\n" +
+        "- tabs: array of {path, viewType, isFocused} for every leaf in the main area. " +
+        "Sidebar leaves (file explorer, outline, etc.) are not included.\n" +
+        "- recentFiles: paths of the most recently opened files (up to 10).\n" +
+        "- mostRecentActiveFile: vault path of the most recently active FileView, even " +
+        "if a non-file tab is currently focused. This is the fallback if you wanted " +
+        "'the file the user was just on' regardless of the current focus.",
+      {},
+      async () => {
+        return this.text(this.ops.getWorkspaceState());
+      },
+    );
+
+    this.tool(
       "graph_orphans",
       "Find notes with few inbound and/or outbound links — useful for surfacing link candidates and " +
         "underused notes in the vault. Returns an array of notes under a 'results' key.\n\n" +

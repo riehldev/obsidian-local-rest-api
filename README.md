@@ -143,6 +143,7 @@ Any MCP client that supports the Streamable HTTP transport can connect to `https
 | `/graph/orphans/` | POST | Find orphan and near-orphan notes by link count |
 | `/graph/neighborhood/` | POST | Notes within N hops of a center note in the link graph |
 | `/graph/hubs/` | POST | Top notes by inbound link count |
+| `/workspace/` | GET | Snapshot of the workspace UI state — open tabs, focused tab, cursor, recent files |
 | `/commands/` | GET | List available Obsidian commands |
 | `/commands/{commandId}/` | POST | Execute a command |
 | `/tags/` | GET | List all tags with usage counts |
@@ -275,6 +276,7 @@ The exact config syntax varies by client; see the [Quick start](#mcp-clients) ex
 | `graph_orphans` | Find orphan and near-orphan notes by inbound/outbound link count |
 | `graph_neighborhood` | Return notes within N hops of a given center note in the link graph |
 | `graph_hubs` | Return the top notes in the vault by inbound link count |
+| `workspace_get` | Snapshot of open tabs, focused tab, cursor/selection, and recent files |
 | `tag_list` | List all tags across the vault with usage counts |
 | `command_list` | List all registered Obsidian commands |
 | `command_execute` | Execute an Obsidian command by ID |

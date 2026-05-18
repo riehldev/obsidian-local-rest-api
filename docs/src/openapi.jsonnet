@@ -181,6 +181,7 @@ std.manifestYamlDoc(
       { name: 'Vault Directories' },
       { name: 'Search' },
       { name: 'Graph' },
+      { name: 'Workspace' },
       { name: 'Commands' },
       { name: 'Open' },
       { name: 'System' },
@@ -916,6 +917,92 @@ std.manifestYamlDoc(
             },
             '400': {
               description: 'Invalid parameter.',
+              content: {
+                'application/json': { schema: { '$ref': '#/components/schemas/Error' } },
+              },
+            },
+          },
+        },
+      },
+      '/workspace/': {
+        get: {
+          tags: ['Workspace'],
+          summary: 'Return a snapshot of the Obsidian workspace UI state.\n',
+          description: importstr 'lib/descriptions/workspace-get.md',
+          responses: {
+            '200': {
+              description: 'Success.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['focused', 'tabs', 'recentFiles', 'mostRecentActiveFile'],
+                    properties: {
+                      focused: {
+                        nullable: true,
+                        type: 'object',
+                        required: ['path', 'viewType'],
+                        properties: {
+                          path: { type: 'string', nullable: true, description: 'Vault-relative path of the focused file, or null when the focused leaf is not a FileView.' },
+                          viewType: { type: 'string', description: "Obsidian view type identifier (e.g. 'markdown', 'image', 'pdf', 'graph')." },
+                          mode: { type: 'string', enum: ['source', 'preview'], description: 'Markdown view mode. Present only for MarkdownView.' },
+                          cursor: {
+                            type: 'object',
+                            required: ['line', 'ch'],
+                            properties: {
+                              line: { type: 'number' },
+                              ch: { type: 'number' },
+                            },
+                            description: 'Cursor position. Present for MarkdownView in source mode only.',
+                          },
+                          selection: {
+                            type: 'object',
+                            required: ['anchor', 'head'],
+                            properties: {
+                              anchor: {
+                                type: 'object',
+                                required: ['line', 'ch'],
+                                properties: { line: { type: 'number' }, ch: { type: 'number' } },
+                              },
+                              head: {
+                                type: 'object',
+                                required: ['line', 'ch'],
+                                properties: { line: { type: 'number' }, ch: { type: 'number' } },
+                              },
+                            },
+                            description: 'Selection range. Present only when a non-empty selection exists in a MarkdownView source-mode editor.',
+                          },
+                        },
+                      },
+                      tabs: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['path', 'viewType', 'isFocused'],
+                          properties: {
+                            path: { type: 'string', nullable: true },
+                            viewType: { type: 'string' },
+                            isFocused: { type: 'boolean' },
+                          },
+                        },
+                      },
+                      recentFiles: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Vault-relative paths of up to 10 most recently opened files.',
+                      },
+                      mostRecentActiveFile: {
+                        type: 'string',
+                        nullable: true,
+                        description: 'Vault path of the most recently active FileView; falls back across non-file tabs. Null if no file has ever been active.',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '401': {
+              description: 'API key required.',
               content: {
                 'application/json': { schema: { '$ref': '#/components/schemas/Error' } },
               },

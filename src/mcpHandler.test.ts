@@ -123,6 +123,17 @@ function makeMockOps() {
         distance: 1,
       },
     ]),
+    getWorkspaceState: jest.fn().mockReturnValue({
+      focused: {
+        path: "notes/foo.md",
+        viewType: "markdown",
+        mode: "source",
+        cursor: { line: 1, ch: 2 },
+      },
+      tabs: [{ path: "notes/foo.md", viewType: "markdown", isFocused: true }],
+      recentFiles: ["notes/foo.md"],
+      mostRecentActiveFile: "notes/foo.md",
+    }),
     graphHubs: jest.fn().mockResolvedValue([
       {
         path: "hub.md",
@@ -184,8 +195,8 @@ describe("McpHandler", () => {
 
   // ---- tool registration --------------------------------------------------
 
-  test("registers all 18 tools", () => {
-    expect(mockTool).toHaveBeenCalledTimes(18);
+  test("registers all 19 tools", () => {
+    expect(mockTool).toHaveBeenCalledTimes(19);
     const names = mockTool.mock.calls.map((c: unknown[]) => c[0]);
     expect(names).toEqual(
       expect.arrayContaining([
@@ -204,6 +215,7 @@ describe("McpHandler", () => {
         "command_list",
         "command_execute",
         "open_file",
+        "workspace_get",
         "graph_orphans",
         "graph_neighborhood",
         "graph_hubs",
@@ -548,6 +560,18 @@ describe("McpHandler", () => {
     const result = await cb({ path: "notes/foo.md", newLeaf: true });
     expect(ops.openVaultFile).toHaveBeenCalledWith("notes/foo.md", true);
     expect(parseText(result).message).toBe("OK");
+  });
+
+  // ---- workspace_get ------------------------------------------------------
+
+  test("workspace_get returns the workspace state object", async () => {
+    const cb = getToolCallback("workspace_get");
+    const result = await cb({});
+    expect(ops.getWorkspaceState).toHaveBeenCalled();
+    const parsed = parseText(result);
+    expect(parsed.focused.path).toBe("notes/foo.md");
+    expect(parsed.tabs).toHaveLength(1);
+    expect(parsed.mostRecentActiveFile).toBe("notes/foo.md");
   });
 
   // ---- graph_orphans ------------------------------------------------------

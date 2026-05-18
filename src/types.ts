@@ -195,3 +195,34 @@ export interface GraphHubsOptions {
   excludeResults: string[];
   excludeFromGraph: string[];
 }
+
+export interface EditorPositionResult {
+  line: number;
+  ch: number;
+}
+
+export interface EditorSelectionResult {
+  anchor: EditorPositionResult;
+  head: EditorPositionResult;
+}
+
+export interface WorkspaceTab {
+  path: string | null;
+  viewType: string;
+  isFocused: boolean;
+}
+
+export interface WorkspaceFocusedDetail {
+  path: string | null;
+  viewType: string;
+  mode?: "source" | "preview";
+  cursor?: EditorPositionResult;
+  selection?: EditorSelectionResult;
+}
+
+export interface WorkspaceState {
+  focused: WorkspaceFocusedDetail | null;
+  tabs: WorkspaceTab[];
+  recentFiles: string[];
+  mostRecentActiveFile: string | null;
+}

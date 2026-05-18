@@ -19,7 +19,11 @@ import {
   TFile,
   Command,
   CachedMetadata,
+  Editor,
+  MarkdownView,
   PluginManifest,
+  View,
+  WorkspaceLeaf,
   _prepareSimpleSearchMock,
 } from "../mocks/obsidian";
 
@@ -2054,6 +2058,166 @@ describe("requestHandler", () => {
         // With journal noise removed, candidate.md has no inbound links and isn't a hub
         expect(res.body.results).toHaveLength(0);
       });
+    });
+  });
+
+  describe("GET /workspace/", () => {
+    function makeMarkdownLeaf(
+      path: string,
+      opts: {
+        mode?: "source" | "preview";
+        cursor?: { line: number; ch: number };
+        selections?: { anchor: { line: number; ch: number }; head: { line: number; ch: number } }[];
+      } = {},
+    ): WorkspaceLeaf {
+      const view = new MarkdownView();
+      const file = new TFile();
+      file.path = path;
+      view.file = file;
+      view._mode = opts.mode ?? "source";
+      view.editor = new Editor();
+      if (opts.cursor) view.editor._cursor = opts.cursor;
+      if (opts.selections) view.editor._selections = opts.selections;
+      const leaf = new WorkspaceLeaf();
+      leaf.view = view;
+      return leaf;
+    }
+
+    function makeNonFileLeaf(viewType: string): WorkspaceLeaf {
+      const view = new View();
+      view._viewType = viewType;
+      const leaf = new WorkspaceLeaf();
+      leaf.view = view;
+      return leaf;
+    }
+
+    test("returns shape with focused markdown file + cursor", async () => {
+      const leaf = makeMarkdownLeaf("notes/foo.md", { cursor: { line: 5, ch: 3 } });
+      app.workspace._rootLeaves = [leaf];
+      app.workspace._mostRecentLeaf = leaf;
+      app.workspace._lastOpenFiles = ["notes/foo.md", "notes/bar.md"];
+      const file = new TFile();
+      file.path = "notes/foo.md";
+      app.workspace._activeFile = file;
+
+      const res = await request(server)
+        .get("/workspace/")
+        .set("Authorization", `Bearer ${API_KEY}`)
+        .expect(200);
+
+      expect(res.body.focused).toMatchObject({
+        path: "notes/foo.md",
+        viewType: "markdown",
+        mode: "source",
+        cursor: { line: 5, ch: 3 },
+      });
+      expect(res.body.focused.selection).toBeUndefined();
+      expect(res.body.tabs).toEqual([
+        { path: "notes/foo.md", viewType: "markdown", isFocused: true },
+      ]);
+      expect(res.body.recentFiles).toEqual(["notes/foo.md", "notes/bar.md"]);
+      expect(res.body.mostRecentActiveFile).toBe("notes/foo.md");
+    });
+
+    test("returns selection when anchor != head", async () => {
+      const leaf = makeMarkdownLeaf("notes/foo.md", {
+        selections: [
+          { anchor: { line: 1, ch: 0 }, head: { line: 3, ch: 7 } },
+        ],
+      });
+      app.workspace._rootLeaves = [leaf];
+      app.workspace._mostRecentLeaf = leaf;
+
+      const res = await request(server)
+        .get("/workspace/")
+        .set("Authorization", `Bearer ${API_KEY}`)
+        .expect(200);
+
+      expect(res.body.focused.cursor).toEqual({ line: 3, ch: 7 });
+      expect(res.body.focused.selection).toEqual({
+        anchor: { line: 1, ch: 0 },
+        head: { line: 3, ch: 7 },
+      });
+    });
+
+    test("does NOT return selection when anchor == head", async () => {
+      const leaf = makeMarkdownLeaf("notes/foo.md", {
+        selections: [
+          { anchor: { line: 2, ch: 4 }, head: { line: 2, ch: 4 } },
+        ],
+      });
+      app.workspace._rootLeaves = [leaf];
+      app.workspace._mostRecentLeaf = leaf;
+
+      const res = await request(server)
+        .get("/workspace/")
+        .set("Authorization", `Bearer ${API_KEY}`)
+        .expect(200);
+
+      expect(res.body.focused.selection).toBeUndefined();
+      expect(res.body.focused.cursor).toEqual({ line: 2, ch: 4 });
+    });
+
+    test("focused non-file tab reports path=null but still names viewType", async () => {
+      const terminal = makeNonFileLeaf("terminal:terminal");
+      const markdownLeaf = makeMarkdownLeaf("notes/foo.md");
+      app.workspace._rootLeaves = [terminal, markdownLeaf];
+      app.workspace._mostRecentLeaf = terminal;
+      const file = new TFile();
+      file.path = "notes/foo.md";
+      app.workspace._activeFile = file;
+
+      const res = await request(server)
+        .get("/workspace/")
+        .set("Authorization", `Bearer ${API_KEY}`)
+        .expect(200);
+
+      expect(res.body.focused).toMatchObject({
+        path: null,
+        viewType: "terminal:terminal",
+      });
+      expect(res.body.focused.cursor).toBeUndefined();
+      expect(res.body.focused.mode).toBeUndefined();
+      // mostRecentActiveFile still falls back to a real file
+      expect(res.body.mostRecentActiveFile).toBe("notes/foo.md");
+      expect(res.body.tabs).toEqual([
+        { path: null, viewType: "terminal:terminal", isFocused: true },
+        { path: "notes/foo.md", viewType: "markdown", isFocused: false },
+      ]);
+    });
+
+    test("returns focused=null and empty tabs when no leaves", async () => {
+      app.workspace._rootLeaves = [];
+      app.workspace._mostRecentLeaf = null;
+      app.workspace._activeFile = null;
+
+      const res = await request(server)
+        .get("/workspace/")
+        .set("Authorization", `Bearer ${API_KEY}`)
+        .expect(200);
+
+      expect(res.body.focused).toBeNull();
+      expect(res.body.tabs).toEqual([]);
+      expect(res.body.mostRecentActiveFile).toBeNull();
+    });
+
+    test("preview-mode markdown view omits cursor info", async () => {
+      const leaf = makeMarkdownLeaf("notes/foo.md", { mode: "preview" });
+      app.workspace._rootLeaves = [leaf];
+      app.workspace._mostRecentLeaf = leaf;
+
+      const res = await request(server)
+        .get("/workspace/")
+        .set("Authorization", `Bearer ${API_KEY}`)
+        .expect(200);
+
+      expect(res.body.focused.mode).toBe("preview");
+      expect(res.body.focused.cursor).toBeUndefined();
+      expect(res.body.focused.selection).toBeUndefined();
+    });
+
+    test("returns 401 without auth", async () => {
+      await request(server).get("/workspace/").expect(401);
     });
   });
 
