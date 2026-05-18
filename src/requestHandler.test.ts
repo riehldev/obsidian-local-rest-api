@@ -2219,6 +2219,88 @@ describe("requestHandler", () => {
     test("returns 401 without auth", async () => {
       await request(server).get("/workspace/").expect(401);
     });
+
+    describe("mostRecentActiveFile fallback chain", () => {
+      test("uses getActiveFile() when it returns a file", async () => {
+        const file = new TFile();
+        file.path = "primary.md";
+        app.workspace._activeFile = file;
+        app.workspace._rootLeaves = [];
+        app.workspace._lastOpenFiles = ["other.md"];
+
+        const res = await request(server)
+          .get("/workspace/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .expect(200);
+        expect(res.body.mostRecentActiveFile).toBe("primary.md");
+      });
+
+      test("falls back to an open FileView leaf when getActiveFile() is null", async () => {
+        const mdLeaf = makeMarkdownLeaf("from-leaf.md");
+        const terminal = makeNonFileLeaf("terminal:terminal");
+        app.workspace._rootLeaves = [terminal, mdLeaf];
+        app.workspace._mostRecentLeaf = terminal;
+        app.workspace._activeFile = null;
+        app.workspace._lastOpenFiles = ["never-touched.md"];
+
+        const res = await request(server)
+          .get("/workspace/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .expect(200);
+        expect(res.body.mostRecentActiveFile).toBe("from-leaf.md");
+      });
+
+      test("falls back to getLastOpenFiles when no FileView leaf is open", async () => {
+        const terminal = makeNonFileLeaf("terminal:terminal");
+        app.workspace._rootLeaves = [terminal];
+        app.workspace._mostRecentLeaf = terminal;
+        app.workspace._activeFile = null;
+        app.workspace._lastOpenFiles = ["from-recents.md", "older.md"];
+
+        const recentFile = new TFile();
+        recentFile.path = "from-recents.md";
+        app.vault.getAbstractFileByPath = (path: string) =>
+          path === "from-recents.md" ? recentFile : null;
+
+        const res = await request(server)
+          .get("/workspace/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .expect(200);
+        expect(res.body.mostRecentActiveFile).toBe("from-recents.md");
+      });
+
+      test("skips recents entries that no longer exist in the vault", async () => {
+        const terminal = makeNonFileLeaf("terminal:terminal");
+        app.workspace._rootLeaves = [terminal];
+        app.workspace._mostRecentLeaf = terminal;
+        app.workspace._activeFile = null;
+        app.workspace._lastOpenFiles = ["deleted.md", "exists.md"];
+
+        const existing = new TFile();
+        existing.path = "exists.md";
+        app.vault.getAbstractFileByPath = (path: string) =>
+          path === "exists.md" ? existing : null;
+
+        const res = await request(server)
+          .get("/workspace/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .expect(200);
+        expect(res.body.mostRecentActiveFile).toBe("exists.md");
+      });
+
+      test("returns null when all fallback sources are empty", async () => {
+        app.workspace._rootLeaves = [];
+        app.workspace._mostRecentLeaf = null;
+        app.workspace._activeFile = null;
+        app.workspace._lastOpenFiles = [];
+
+        const res = await request(server)
+          .get("/workspace/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .expect(200);
+        expect(res.body.mostRecentActiveFile).toBeNull();
+      });
+    });
   });
 
   describe("apiExtensions", () => {

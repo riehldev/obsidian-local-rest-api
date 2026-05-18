@@ -544,9 +544,10 @@ export class McpHandler {
         "- tabs: array of {path, viewType, isFocused} for every leaf in the main area. " +
         "Sidebar leaves (file explorer, outline, etc.) are not included.\n" +
         "- recentFiles: paths of the most recently opened files (up to 10).\n" +
-        "- mostRecentActiveFile: vault path of the most recently active FileView, even " +
-        "if a non-file tab is currently focused. This is the fallback if you wanted " +
-        "'the file the user was just on' regardless of the current focus.",
+        "- mostRecentActiveFile: vault path of the most recently active file. Uses a " +
+        "fallback chain (Obsidian's getActiveFile() -> first open FileView leaf -> " +
+        "first existing entry in recentFiles), so it's robust to plugin reloads and to " +
+        "having only non-file tabs focused. Only null if no file has ever been opened.",
       {},
       async () => {
         return this.text(this.ops.getWorkspaceState());

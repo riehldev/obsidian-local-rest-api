@@ -609,19 +609,48 @@ export class VaultOperations {
   getWorkspaceState(): WorkspaceState {
     const focusedLeaf = this.app.workspace.getMostRecentLeaf() ?? null;
     const tabs: WorkspaceTab[] = [];
+    const fileViewPaths: string[] = [];
     this.app.workspace.iterateRootLeaves((leaf) => {
+      const path = extractLeafPath(leaf);
       tabs.push({
-        path: extractLeafPath(leaf),
+        path,
         viewType: leaf.view.getViewType(),
         isFocused: leaf === focusedLeaf,
       });
+      if (path !== null) fileViewPaths.push(path);
     });
+    const recentFiles = this.app.workspace.getLastOpenFiles();
     return {
       focused: focusedLeaf ? buildFocusedDetail(focusedLeaf) : null,
       tabs,
-      recentFiles: this.app.workspace.getLastOpenFiles(),
-      mostRecentActiveFile: this.app.workspace.getActiveFile()?.path ?? null,
+      recentFiles,
+      mostRecentActiveFile: this.resolveMostRecentActiveFile(fileViewPaths, recentFiles),
     };
+  }
+
+  private resolveMostRecentActiveFile(
+    openFileViewPaths: string[],
+    recentFiles: string[],
+  ): string | null {
+    // Primary: Obsidian's own getActiveFile() — handles the common case where a
+    // FileView is focused, and falls back to its own internal "most recent" tracking.
+    const active = this.app.workspace.getActiveFile();
+    if (active) return active.path;
+
+    // Fallback 1: any FileView leaf currently open in the main area. If the user
+    // has a markdown tab open but a Terminal is focused, we want the markdown tab.
+    if (openFileViewPaths.length > 0) return openFileViewPaths[0];
+
+    // Fallback 2: the first entry in getLastOpenFiles() that still resolves to a
+    // file in the vault. Survives plugin reloads where Obsidian's in-memory
+    // "most recent" tracking has been cleared but the on-disk recent-files list
+    // still has valid entries.
+    for (const path of recentFiles) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) return path;
+    }
+
+    return null;
   }
 
   // ---------------------------------------------------------------------------
