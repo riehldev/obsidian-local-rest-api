@@ -140,6 +140,9 @@ Any MCP client that supports the Streamable HTTP transport can connect to `https
 | `/periodic/{period}/{year}/{month}/{day}/` | GET PUT PATCH POST DELETE | Periodic note for a specific date |
 | `/search/simple/` | POST | Full-text search across all notes |
 | `/search/` | POST | Structured search via JsonLogic |
+| `/graph/orphans/` | POST | Find orphan and near-orphan notes by link count |
+| `/graph/neighborhood/` | POST | Notes within N hops of a center note in the link graph |
+| `/graph/hubs/` | POST | Top notes by inbound link count |
 | `/commands/` | GET | List available Obsidian commands |
 | `/commands/{commandId}/` | POST | Execute a command |
 | `/tags/` | GET | List all tags with usage counts |
@@ -269,6 +272,9 @@ The exact config syntax varies by client; see the [Quick start](#mcp-clients) ex
 | `periodic_note_get_path` | Return the vault path of the current periodic note (`daily`, `weekly`, `monthly`, `quarterly`, `yearly`) |
 | `search_query` | Search using a [JsonLogic](https://jsonlogic.com/) query against note metadata |
 | `search_simple` | Full-text search using Obsidian's built-in search |
+| `graph_orphans` | Find orphan and near-orphan notes by inbound/outbound link count |
+| `graph_neighborhood` | Return notes within N hops of a given center note in the link graph |
+| `graph_hubs` | Return the top notes in the vault by inbound link count |
 | `tag_list` | List all tags across the vault with usage counts |
 | `command_list` | List all registered Obsidian commands |
 | `command_execute` | Execute an Obsidian command by ID |

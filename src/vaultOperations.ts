@@ -30,6 +30,11 @@ import {
   DocumentMapObject,
   ErrorCode,
   FileMetadataObject,
+  GraphHubsOptions,
+  GraphNeighborhoodOptions,
+  GraphNeighborResult,
+  GraphNoteResult,
+  GraphOrphansOptions,
   PeriodicNoteInterface,
   SearchContext,
   SearchJsonResponseItem,
@@ -590,4 +595,225 @@ export class VaultOperations {
   openVaultFile(filePath: string, newLeaf = false): void {
     void this.app.workspace.openLinkText(filePath, "/", newLeaf);
   }
+
+  // ---------------------------------------------------------------------------
+  // Graph operations
+  // ---------------------------------------------------------------------------
+
+  async graphOrphans(opts: GraphOrphansOptions): Promise<GraphNoteResult[]> {
+    const excludeFromGraph = compileGlobs(opts.excludeFromGraph);
+    const excludeResults = compileGlobs(opts.excludeResults);
+    const { inbound, outbound } = this.buildLinkCounts(excludeFromGraph);
+
+    const candidates: GraphNoteResult[] = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (matchesAnyGlob(file.path, excludeFromGraph)) continue;
+
+      const inboundCount = inbound[file.path] ?? 0;
+      const outboundCount = outbound[file.path] ?? 0;
+
+      if (inboundCount > opts.minInbound) continue;
+      if (outboundCount > opts.minOutbound) continue;
+
+      if (matchesAnyGlob(file.path, excludeResults)) continue;
+
+      candidates.push(await this.buildGraphNoteResult(file, inboundCount, outboundCount));
+      if (candidates.length >= opts.maxResults) break;
+    }
+    return candidates;
+  }
+
+  async graphNeighborhood(opts: GraphNeighborhoodOptions): Promise<GraphNeighborResult[]> {
+    const center = this.app.vault.getAbstractFileByPath(opts.path);
+    if (!(center instanceof TFile)) {
+      throw new FileNotFoundError(`File not found: ${opts.path}`);
+    }
+    const excludeFromGraph = compileGlobs(opts.excludeFromGraph);
+    const excludeResults = compileGlobs(opts.excludeResults);
+    if (matchesAnyGlob(center.path, excludeFromGraph)) {
+      throw new Error(`Center note '${center.path}' is excluded from the graph by excludeFromGraph`);
+    }
+
+    const { inbound, outbound, edges } = this.buildLinkGraph(excludeFromGraph, opts.includeBacklinks);
+
+    const visited = new Map<string, number>();
+    visited.set(center.path, 0);
+    let frontier = [center.path];
+    for (let depth = 1; depth <= opts.hops; depth++) {
+      const next: string[] = [];
+      for (const node of frontier) {
+        for (const neighbor of edges[node] ?? []) {
+          if (visited.has(neighbor)) continue;
+          if (matchesAnyGlob(neighbor, excludeFromGraph)) continue;
+          visited.set(neighbor, depth);
+          next.push(neighbor);
+        }
+      }
+      frontier = next;
+      if (frontier.length === 0) break;
+    }
+    visited.delete(center.path);
+
+    const ordered = Array.from(visited.entries())
+      .sort((a, b) => a[1] - b[1])
+      .filter(([path]) => !matchesAnyGlob(path, excludeResults));
+
+    const results: GraphNeighborResult[] = [];
+    for (const [path, distance] of ordered) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      const result = await this.buildGraphNoteResult(
+        file,
+        inbound[path] ?? 0,
+        outbound[path] ?? 0,
+      );
+      results.push({ ...result, distance });
+      if (results.length >= opts.maxResults) break;
+    }
+    return results;
+  }
+
+  async graphHubs(opts: GraphHubsOptions): Promise<GraphNoteResult[]> {
+    const excludeFromGraph = compileGlobs(opts.excludeFromGraph);
+    const excludeResults = compileGlobs(opts.excludeResults);
+    const { inbound, outbound } = this.buildLinkCounts(excludeFromGraph);
+
+    const sortedPaths = Object.keys(inbound)
+      .filter((p) => !matchesAnyGlob(p, excludeFromGraph))
+      .filter((p) => !matchesAnyGlob(p, excludeResults))
+      .filter((p) => (inbound[p] ?? 0) > 0)
+      .sort((a, b) => (inbound[b] ?? 0) - (inbound[a] ?? 0) || a.localeCompare(b));
+
+    const results: GraphNoteResult[] = [];
+    for (const path of sortedPaths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      results.push(
+        await this.buildGraphNoteResult(file, inbound[path] ?? 0, outbound[path] ?? 0),
+      );
+      if (results.length >= opts.maxResults) break;
+    }
+    return results;
+  }
+
+  private buildLinkCounts(excludeFromGraph: RegExp[]): {
+    inbound: Record<string, number>;
+    outbound: Record<string, number>;
+  } {
+    const inbound: Record<string, number> = {};
+    const outbound: Record<string, number> = {};
+    for (const [sourcePath, targets] of Object.entries(
+      this.app.metadataCache.resolvedLinks,
+    )) {
+      if (matchesAnyGlob(sourcePath, excludeFromGraph)) continue;
+      for (const targetPath of Object.keys(targets)) {
+        if (matchesAnyGlob(targetPath, excludeFromGraph)) continue;
+        outbound[sourcePath] = (outbound[sourcePath] ?? 0) + 1;
+        inbound[targetPath] = (inbound[targetPath] ?? 0) + 1;
+      }
+    }
+    return { inbound, outbound };
+  }
+
+  private buildLinkGraph(
+    excludeFromGraph: RegExp[],
+    includeBacklinks: boolean,
+  ): {
+    inbound: Record<string, number>;
+    outbound: Record<string, number>;
+    edges: Record<string, string[]>;
+  } {
+    const inbound: Record<string, number> = {};
+    const outbound: Record<string, number> = {};
+    const edges: Record<string, Set<string>> = {};
+    for (const [sourcePath, targets] of Object.entries(
+      this.app.metadataCache.resolvedLinks,
+    )) {
+      if (matchesAnyGlob(sourcePath, excludeFromGraph)) continue;
+      for (const targetPath of Object.keys(targets)) {
+        if (matchesAnyGlob(targetPath, excludeFromGraph)) continue;
+        outbound[sourcePath] = (outbound[sourcePath] ?? 0) + 1;
+        inbound[targetPath] = (inbound[targetPath] ?? 0) + 1;
+        (edges[sourcePath] ??= new Set<string>()).add(targetPath);
+        if (includeBacklinks) {
+          (edges[targetPath] ??= new Set<string>()).add(sourcePath);
+        }
+      }
+    }
+    const out: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(edges)) out[k] = Array.from(v);
+    return { inbound, outbound, edges: out };
+  }
+
+  private async buildGraphNoteResult(
+    file: TFile,
+    inboundCount: number,
+    outboundCount: number,
+  ): Promise<GraphNoteResult> {
+    const cache = this.app.metadataCache.getFileCache(file);
+    const frontmatter = { ...(cache?.frontmatter ?? {}) };
+    delete frontmatter.position;
+    const directTags = (cache?.tags ?? [])
+      .filter((tag) => tag)
+      .map((tag) => tag.tag);
+    const frontmatterTags = Array.isArray(frontmatter.tags)
+      ? (frontmatter.tags as unknown[]).filter((t): t is string => typeof t === "string")
+      : [];
+    const tags: string[] = [...frontmatterTags, ...directTags]
+      .filter((tag) => tag)
+      .map((tag) => tag.replace(/^#/, ""))
+      .filter((value, index, self) => self.indexOf(value) === index);
+
+    const content = await this.app.vault.cachedRead(file);
+    const { frontmatterExcerpt, contentExcerpt } = splitExcerpts(content);
+
+    return {
+      path: file.path,
+      inboundCount,
+      outboundCount,
+      tags,
+      frontmatterExcerpt,
+      contentExcerpt,
+    };
+  }
+}
+
+export const EXCERPT_MAX_CHARS = 100;
+
+export function compileGlobs(patterns: string[]): RegExp[] {
+  return patterns.filter((p) => p && p.length > 0).map((p) => WildcardRegexp(p));
+}
+
+export function matchesAnyGlob(path: string, regexes: RegExp[]): boolean {
+  for (const r of regexes) if (r.test(path)) return true;
+  return false;
+}
+
+export function splitExcerpts(content: string): {
+  frontmatterExcerpt: string;
+  contentExcerpt: string;
+} {
+  let frontmatterBody = "";
+  let body = content;
+  if (content.startsWith("---")) {
+    const afterOpen = content.indexOf("\n", 3);
+    if (afterOpen !== -1) {
+      const closeMatch = content.slice(afterOpen + 1).search(/^---\s*(\r?\n|$)/m);
+      if (closeMatch !== -1) {
+        frontmatterBody = content.slice(afterOpen + 1, afterOpen + 1 + closeMatch);
+        const afterClose = content.indexOf("\n", afterOpen + 1 + closeMatch);
+        body = afterClose === -1 ? "" : content.slice(afterClose + 1);
+      }
+    }
+  }
+  return {
+    frontmatterExcerpt: collapseAndTruncate(frontmatterBody, EXCERPT_MAX_CHARS),
+    contentExcerpt: collapseAndTruncate(body, EXCERPT_MAX_CHARS),
+  };
+}
+
+function collapseAndTruncate(input: string, maxChars: number): string {
+  const collapsed = input.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxChars) return collapsed;
+  return collapsed.slice(0, maxChars);
 }

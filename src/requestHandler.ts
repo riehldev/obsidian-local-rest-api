@@ -1266,6 +1266,145 @@ export default class RequestHandler {
     res.json();
   }
 
+  private parseGraphBody(req: express.Request): Record<string, unknown> {
+    const body: unknown = req.body;
+    if (body == null) return {};
+    if (typeof body !== "object" || Array.isArray(body)) {
+      throw new Error("Request body must be a JSON object");
+    }
+    return body as Record<string, unknown>;
+  }
+
+  private parseNonNegativeInt(
+    value: unknown,
+    fieldName: string,
+    defaultValue: number,
+  ): number {
+    if (value === undefined || value === null) return defaultValue;
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+      throw new Error(`${fieldName} must be a non-negative integer`);
+    }
+    return value;
+  }
+
+  private parsePositiveInt(
+    value: unknown,
+    fieldName: string,
+    defaultValue: number,
+  ): number {
+    if (value === undefined || value === null) return defaultValue;
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+      throw new Error(`${fieldName} must be a positive integer`);
+    }
+    return value;
+  }
+
+  private parseStringArray(value: unknown, fieldName: string): string[] {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
+      throw new Error(`${fieldName} must be an array of strings`);
+    }
+    return value;
+  }
+
+  private parseBoolean(
+    value: unknown,
+    fieldName: string,
+    defaultValue: boolean,
+  ): boolean {
+    if (value === undefined || value === null) return defaultValue;
+    if (typeof value !== "boolean") {
+      throw new Error(`${fieldName} must be a boolean`);
+    }
+    return value;
+  }
+
+  async graphOrphansPost(
+    req: express.Request,
+    res: express.Response,
+  ): Promise<void> {
+    try {
+      const body = this.parseGraphBody(req);
+      const maxResults = this.parsePositiveInt(body.maxResults, "maxResults", 50);
+      const minInbound = this.parseNonNegativeInt(body.minInbound, "minInbound", 0);
+      const minOutbound = this.parseNonNegativeInt(body.minOutbound, "minOutbound", 0);
+      const excludeResults = this.parseStringArray(body.excludeResults, "excludeResults");
+      const excludeFromGraph = this.parseStringArray(body.excludeFromGraph, "excludeFromGraph");
+      const results = await this.operations.graphOrphans({
+        maxResults,
+        minInbound,
+        minOutbound,
+        excludeResults,
+        excludeFromGraph,
+      });
+      res.json({ results });
+    } catch (e) {
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.InvalidFilterQuery,
+        message: (e as Error).message,
+      });
+    }
+  }
+
+  async graphNeighborhoodPost(
+    req: express.Request,
+    res: express.Response,
+  ): Promise<void> {
+    try {
+      const body = this.parseGraphBody(req);
+      if (typeof body.path !== "string" || body.path.length === 0) {
+        throw new Error("path is required and must be a non-empty string");
+      }
+      const hops = this.parsePositiveInt(body.hops, "hops", 2);
+      if (hops > 4) throw new Error("hops must be <= 4");
+      const includeBacklinks = this.parseBoolean(body.includeBacklinks, "includeBacklinks", true);
+      const maxResults = this.parsePositiveInt(body.maxResults, "maxResults", 50);
+      const excludeResults = this.parseStringArray(body.excludeResults, "excludeResults");
+      const excludeFromGraph = this.parseStringArray(body.excludeFromGraph, "excludeFromGraph");
+      const results = await this.operations.graphNeighborhood({
+        path: body.path,
+        hops,
+        includeBacklinks,
+        maxResults,
+        excludeResults,
+        excludeFromGraph,
+      });
+      res.json({ results });
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404, message: e.message });
+        return;
+      }
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.InvalidFilterQuery,
+        message: (e as Error).message,
+      });
+    }
+  }
+
+  async graphHubsPost(
+    req: express.Request,
+    res: express.Response,
+  ): Promise<void> {
+    try {
+      const body = this.parseGraphBody(req);
+      const maxResults = this.parsePositiveInt(body.maxResults, "maxResults", 20);
+      const excludeResults = this.parseStringArray(body.excludeResults, "excludeResults");
+      const excludeFromGraph = this.parseStringArray(body.excludeFromGraph, "excludeFromGraph");
+      const results = await this.operations.graphHubs({
+        maxResults,
+        excludeResults,
+        excludeFromGraph,
+      });
+      res.json({ results });
+    } catch (e) {
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.InvalidFilterQuery,
+        message: (e as Error).message,
+      });
+    }
+  }
+
   async certificateGet(
     _req: express.Request,
     res: express.Response,
@@ -1428,6 +1567,10 @@ export default class RequestHandler {
 
     this.api.route("/search/").post((rq, rs) => { void this.searchQueryPost(rq, rs); });
     this.api.route("/search/simple/").post((rq, rs) => { void this.searchSimplePost(rq, rs); });
+
+    this.api.route("/graph/orphans/").post((rq, rs) => { void this.graphOrphansPost(rq, rs); });
+    this.api.route("/graph/neighborhood/").post((rq, rs) => { void this.graphNeighborhoodPost(rq, rs); });
+    this.api.route("/graph/hubs/").post((rq, rs) => { void this.graphHubsPost(rq, rs); });
 
     this.api.route("/open/*").post((rq, rs) => { void this.openPost(rq, rs); });
 

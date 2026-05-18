@@ -159,3 +159,39 @@ export interface DocumentMapObject {
   blocks: string[];
   frontmatterFields: string[];
 }
+
+export interface GraphNoteResult {
+  path: string;
+  inboundCount: number;
+  outboundCount: number;
+  tags: string[];
+  frontmatterExcerpt: string;
+  contentExcerpt: string;
+}
+
+export interface GraphNeighborResult extends GraphNoteResult {
+  distance: number;
+}
+
+export interface GraphOrphansOptions {
+  maxResults: number;
+  minInbound: number;
+  minOutbound: number;
+  excludeResults: string[];
+  excludeFromGraph: string[];
+}
+
+export interface GraphNeighborhoodOptions {
+  path: string;
+  hops: number;
+  includeBacklinks: boolean;
+  maxResults: number;
+  excludeResults: string[];
+  excludeFromGraph: string[];
+}
+
+export interface GraphHubsOptions {
+  maxResults: number;
+  excludeResults: string[];
+  excludeFromGraph: string[];
+}

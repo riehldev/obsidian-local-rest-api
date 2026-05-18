@@ -102,6 +102,37 @@ function makeMockOps() {
     openVaultFile: jest.fn(),
     periodicGetNote: jest.fn().mockReturnValue([mockFile, null]),
     periodicGetOrCreateNote: jest.fn().mockResolvedValue([mockFile, null]),
+    graphOrphans: jest.fn().mockResolvedValue([
+      {
+        path: "orphan.md",
+        inboundCount: 0,
+        outboundCount: 0,
+        tags: [],
+        frontmatterExcerpt: "",
+        contentExcerpt: "lonely",
+      },
+    ]),
+    graphNeighborhood: jest.fn().mockResolvedValue([
+      {
+        path: "neighbor.md",
+        inboundCount: 1,
+        outboundCount: 0,
+        tags: ["x"],
+        frontmatterExcerpt: "",
+        contentExcerpt: "near",
+        distance: 1,
+      },
+    ]),
+    graphHubs: jest.fn().mockResolvedValue([
+      {
+        path: "hub.md",
+        inboundCount: 5,
+        outboundCount: 1,
+        tags: [],
+        frontmatterExcerpt: "",
+        contentExcerpt: "hub",
+      },
+    ]),
   };
 }
 
@@ -153,8 +184,8 @@ describe("McpHandler", () => {
 
   // ---- tool registration --------------------------------------------------
 
-  test("registers all 15 tools", () => {
-    expect(mockTool).toHaveBeenCalledTimes(15);
+  test("registers all 18 tools", () => {
+    expect(mockTool).toHaveBeenCalledTimes(18);
     const names = mockTool.mock.calls.map((c: unknown[]) => c[0]);
     expect(names).toEqual(
       expect.arrayContaining([
@@ -173,6 +204,9 @@ describe("McpHandler", () => {
         "command_list",
         "command_execute",
         "open_file",
+        "graph_orphans",
+        "graph_neighborhood",
+        "graph_hubs",
       ]),
     );
   });
@@ -514,6 +548,82 @@ describe("McpHandler", () => {
     const result = await cb({ path: "notes/foo.md", newLeaf: true });
     expect(ops.openVaultFile).toHaveBeenCalledWith("notes/foo.md", true);
     expect(parseText(result).message).toBe("OK");
+  });
+
+  // ---- graph_orphans ------------------------------------------------------
+
+  test("graph_orphans applies defaults when called with no args", async () => {
+    const cb = getToolCallback("graph_orphans");
+    const result = await cb({});
+    expect(ops.graphOrphans).toHaveBeenCalledWith({
+      maxResults: 50,
+      minInbound: 0,
+      minOutbound: 0,
+      excludeResults: [],
+      excludeFromGraph: [],
+    });
+    expect(parseText(result).results[0].path).toBe("orphan.md");
+  });
+
+  test("graph_orphans forwards all supplied arguments", async () => {
+    const cb = getToolCallback("graph_orphans");
+    await cb({
+      maxResults: 5,
+      minInbound: 1,
+      minOutbound: 2,
+      excludeResults: ["02 Journal/**"],
+      excludeFromGraph: ["_archive/**"],
+    });
+    expect(ops.graphOrphans).toHaveBeenCalledWith({
+      maxResults: 5,
+      minInbound: 1,
+      minOutbound: 2,
+      excludeResults: ["02 Journal/**"],
+      excludeFromGraph: ["_archive/**"],
+    });
+  });
+
+  // ---- graph_neighborhood -------------------------------------------------
+
+  test("graph_neighborhood applies defaults", async () => {
+    const cb = getToolCallback("graph_neighborhood");
+    const result = await cb({ path: "center.md" });
+    expect(ops.graphNeighborhood).toHaveBeenCalledWith({
+      path: "center.md",
+      hops: 2,
+      includeBacklinks: true,
+      maxResults: 50,
+      excludeResults: [],
+      excludeFromGraph: [],
+    });
+    expect(parseText(result).results[0]).toMatchObject({
+      path: "neighbor.md",
+      distance: 1,
+    });
+  });
+
+  test("graph_neighborhood forwards includeBacklinks=false", async () => {
+    const cb = getToolCallback("graph_neighborhood");
+    await cb({ path: "center.md", includeBacklinks: false, hops: 3 });
+    expect(ops.graphNeighborhood).toHaveBeenCalledWith(
+      expect.objectContaining({ includeBacklinks: false, hops: 3 }),
+    );
+  });
+
+  // ---- graph_hubs ---------------------------------------------------------
+
+  test("graph_hubs applies defaults", async () => {
+    const cb = getToolCallback("graph_hubs");
+    const result = await cb({});
+    expect(ops.graphHubs).toHaveBeenCalledWith({
+      maxResults: 20,
+      excludeResults: [],
+      excludeFromGraph: [],
+    });
+    expect(parseText(result).results[0]).toMatchObject({
+      path: "hub.md",
+      inboundCount: 5,
+    });
   });
 
   // ---- handleRequest ------------------------------------------------------

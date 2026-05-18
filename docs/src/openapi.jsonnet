@@ -14,6 +14,7 @@ local TargetingShared = importstr 'lib/descriptions/targeting.md';
 local GetShared = TargetingShared + '\n' + importstr 'lib/descriptions/get-shared.md';
 local PostShared = TargetingShared + '\n' + importstr 'lib/descriptions/post-shared.md';
 local PutShared = TargetingShared + '\n' + importstr 'lib/descriptions/put-shared.md';
+local GraphShared = importstr 'lib/descriptions/graph-shared.md';
 local PatchDescription(fileRef) =
   'Inserts content into ' + fileRef + ' relative to a heading, block reference, or frontmatter field within that document.\n\n' + Patch.description;
 
@@ -142,6 +143,30 @@ std.manifestYamlDoc(
             },
           },
         },
+        GraphNoteResult: {
+          type: 'object',
+          required: ['path', 'inboundCount', 'outboundCount', 'tags', 'frontmatterExcerpt', 'contentExcerpt'],
+          properties: {
+            path: { type: 'string', description: 'Vault-relative path of the note.' },
+            inboundCount: { type: 'number', description: 'Number of notes that link to this note (after applying excludeFromGraph).' },
+            outboundCount: { type: 'number', description: 'Number of notes this note links to (after applying excludeFromGraph).' },
+            tags: { type: 'array', items: { type: 'string' }, description: 'Tag names without leading `#`.' },
+            frontmatterExcerpt: { type: 'string', description: 'Up to ~100 chars of the YAML frontmatter body, whitespace-collapsed. Empty if the note has no frontmatter.' },
+            contentExcerpt: { type: 'string', description: 'Up to ~100 chars of the markdown body following any frontmatter, whitespace-collapsed.' },
+          },
+        },
+        GraphNeighborResult: {
+          allOf: [
+            { '$ref': '#/components/schemas/GraphNoteResult' },
+            {
+              type: 'object',
+              required: ['distance'],
+              properties: {
+                distance: { type: 'number', description: 'Number of hops from the center note (1..hops).' },
+              },
+            },
+          ],
+        },
       },
     },
     security: [
@@ -155,6 +180,7 @@ std.manifestYamlDoc(
       { name: 'Periodic Notes' },
       { name: 'Vault Directories' },
       { name: 'Search' },
+      { name: 'Graph' },
       { name: 'Commands' },
       { name: 'Open' },
       { name: 'System' },
@@ -718,6 +744,180 @@ std.manifestYamlDoc(
                     },
                   },
                 },
+              },
+            },
+          },
+        },
+      },
+      '/graph/orphans/': {
+        post: {
+          tags: ['Graph'],
+          summary: 'Find orphan and near-orphan notes by link count.\n',
+          description: (importstr 'lib/descriptions/graph-orphans.md') + '\n' + GraphShared,
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    maxResults: { type: 'number', default: 50, description: 'Maximum number of results to return.' },
+                    minInbound: { type: 'number', default: 0, description: 'Maximum allowed inbound link count for a note to be considered an orphan. 0 = strict.' },
+                    minOutbound: { type: 'number', default: 0, description: 'Maximum allowed outbound link count for a note to be considered an orphan. 0 = strict.' },
+                    excludeResults: { type: 'array', items: { type: 'string' }, description: 'Glob patterns: hide matching paths from results but keep them in the graph.' },
+                    excludeFromGraph: { type: 'array', items: { type: 'string' }, description: 'Glob patterns: remove matching paths from the graph entirely (no inbound/outbound contribution).' },
+                  },
+                },
+                examples: {
+                  strict_orphans: {
+                    summary: 'Strict orphans (default).',
+                    value: {},
+                  },
+                  near_orphans_ignoring_journal: {
+                    summary: 'Notes with up to 1 link in either direction, ignoring journal noise.',
+                    value: { minInbound: 1, minOutbound: 1, excludeFromGraph: ['02 Journal/**'] },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Success.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: { '$ref': '#/components/schemas/GraphNoteResult' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid parameter.',
+              content: {
+                'application/json': { schema: { '$ref': '#/components/schemas/Error' } },
+              },
+            },
+          },
+        },
+      },
+      '/graph/neighborhood/': {
+        post: {
+          tags: ['Graph'],
+          summary: 'Return notes within N hops of a given center note.\n',
+          description: (importstr 'lib/descriptions/graph-neighborhood.md') + '\n' + GraphShared,
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['path'],
+                  properties: {
+                    path: { type: 'string', description: 'Vault-relative path of the center note.' },
+                    hops: { type: 'number', default: 2, minimum: 1, maximum: 4, description: 'Number of link-hops to traverse outward.' },
+                    includeBacklinks: { type: 'boolean', default: true, description: 'Treat the graph as undirected if true.' },
+                    maxResults: { type: 'number', default: 50 },
+                    excludeResults: { type: 'array', items: { type: 'string' } },
+                    excludeFromGraph: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+                examples: {
+                  basic: {
+                    summary: 'Two-hop undirected neighborhood.',
+                    value: { path: '01 Atlas/Concepts/The Open Palm.md' },
+                  },
+                  forward_only: {
+                    summary: 'Three-hop outbound-only traversal.',
+                    value: { path: '01 Atlas/Concepts/The Hunger.md', hops: 3, includeBacklinks: false },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Success.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: { '$ref': '#/components/schemas/GraphNeighborResult' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid parameter.',
+              content: {
+                'application/json': { schema: { '$ref': '#/components/schemas/Error' } },
+              },
+            },
+            '404': {
+              description: 'Center note does not exist.',
+              content: {
+                'application/json': { schema: { '$ref': '#/components/schemas/Error' } },
+              },
+            },
+          },
+        },
+      },
+      '/graph/hubs/': {
+        post: {
+          tags: ['Graph'],
+          summary: 'Return the top notes by inbound link count.\n',
+          description: (importstr 'lib/descriptions/graph-hubs.md') + '\n' + GraphShared,
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    maxResults: { type: 'number', default: 20 },
+                    excludeResults: { type: 'array', items: { type: 'string' } },
+                    excludeFromGraph: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+                examples: {
+                  top_20: { summary: 'Top 20 hubs across the vault.', value: {} },
+                  ignoring_journal: { summary: 'Top hubs after ignoring journal noise.', value: { excludeFromGraph: ['02 Journal/**'] } },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Success.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: { '$ref': '#/components/schemas/GraphNoteResult' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid parameter.',
+              content: {
+                'application/json': { schema: { '$ref': '#/components/schemas/Error' } },
               },
             },
           },

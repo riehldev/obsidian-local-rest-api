@@ -1706,6 +1706,357 @@ describe("requestHandler", () => {
     });
   });
 
+  describe("graph endpoints", () => {
+    function makeFile(path: string): TFile {
+      const f = new TFile();
+      f.path = path;
+      return f;
+    }
+
+    function setupGraphFixture(files: { path: string; content?: string; frontmatter?: Record<string, unknown> }[], links: Record<string, string[]>) {
+      const tfiles = files.map((f) => makeFile(f.path));
+      app.vault._markdownFiles = tfiles;
+      app.vault.getAbstractFileByPath = (path: string) =>
+        tfiles.find((f) => f.path === path) ?? null;
+      app.vault.cachedRead = (file: TFile) => {
+        const meta = files.find((f) => f.path === file.path);
+        return Promise.resolve(meta?.content ?? "");
+      };
+      const fileCacheByPath: Record<string, CachedMetadata> = {};
+      for (const f of files) {
+        const c = new CachedMetadata();
+        if (f.frontmatter) c.frontmatter = f.frontmatter;
+        fileCacheByPath[f.path] = c;
+      }
+      app.metadataCache.getFileCache = (file: TFile) =>
+        fileCacheByPath[file.path] ?? null;
+      const resolved: Record<string, Record<string, number>> = {};
+      for (const [src, targets] of Object.entries(links)) {
+        resolved[src] = {};
+        for (const t of targets) resolved[src][t] = 1;
+      }
+      app.metadataCache.resolvedLinks = resolved;
+    }
+
+    describe("/graph/orphans/", () => {
+      test("returns strict orphans by default", async () => {
+        setupGraphFixture(
+          [
+            { path: "orphan.md", content: "I am alone" },
+            { path: "linker.md", content: "links out" },
+            { path: "linked.md", content: "linked from linker" },
+          ],
+          { "linker.md": ["linked.md"] },
+        );
+
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({})
+          .expect(200);
+
+        expect(res.body.results.map((r: { path: string }) => r.path)).toEqual(["orphan.md"]);
+        expect(res.body.results[0]).toMatchObject({
+          path: "orphan.md",
+          inboundCount: 0,
+          outboundCount: 0,
+        });
+        expect(res.body.results[0].contentExcerpt).toBe("I am alone");
+      });
+
+      test("respects minInbound and minOutbound thresholds", async () => {
+        setupGraphFixture(
+          [
+            { path: "a.md", content: "a" },
+            { path: "b.md", content: "b" },
+            { path: "c.md", content: "c" },
+          ],
+          { "a.md": ["b.md", "c.md"] },
+        );
+
+        // a has outbound=2, inbound=0 — not a strict orphan
+        // b has inbound=1, outbound=0
+        // c has inbound=1, outbound=0
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ minInbound: 0, minOutbound: 2 })
+          .expect(200);
+
+        // a (out=2, in=0) qualifies; b/c don't (in=1 > 0)
+        expect(res.body.results.map((r: { path: string }) => r.path)).toEqual(["a.md"]);
+      });
+
+      test("excludeResults hides results but still counts their links toward inbound", async () => {
+        setupGraphFixture(
+          [
+            { path: "target.md" },
+            { path: "journal/day.md" },
+            { path: "lonely.md" },
+          ],
+          { "journal/day.md": ["target.md"] },
+        );
+
+        // target.md has inbound=1 from journal/day.md — not an orphan
+        // journal/day.md has outbound=1 — not an orphan
+        // lonely.md has inbound=0, outbound=0 — strict orphan
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ excludeResults: ["journal/**"] })
+          .expect(200);
+
+        // journal/day.md is excluded from results, but its outbound link still counts
+        // toward target.md's inbound, so target.md is still not an orphan.
+        expect(res.body.results.map((r: { path: string }) => r.path)).toEqual(["lonely.md"]);
+      });
+
+      test("excludeFromGraph also removes links from the graph entirely", async () => {
+        setupGraphFixture(
+          [
+            { path: "target.md" },
+            { path: "journal/day.md" },
+            { path: "lonely.md" },
+          ],
+          { "journal/day.md": ["target.md"] },
+        );
+
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ excludeFromGraph: ["journal/**"] })
+          .expect(200);
+
+        // With journal/** removed from the graph entirely, target.md has no inbound
+        // links and becomes an orphan too. lonely.md is also an orphan.
+        const paths = res.body.results.map((r: { path: string }) => r.path).sort();
+        expect(paths).toEqual(["lonely.md", "target.md"]);
+      });
+
+      test("rejects negative minInbound", async () => {
+        setupGraphFixture([{ path: "a.md" }], {});
+        await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ minInbound: -1 })
+          .expect(400);
+      });
+
+      test("respects maxResults cap", async () => {
+        const files = Array.from({ length: 10 }, (_, i) => ({ path: `note-${i}.md` }));
+        setupGraphFixture(files, {});
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ maxResults: 3 })
+          .expect(200);
+        expect(res.body.results).toHaveLength(3);
+      });
+
+      test("splits frontmatter and content excerpts when frontmatter is present", async () => {
+        setupGraphFixture(
+          [
+            {
+              path: "withfm.md",
+              content: "---\ntype: hub\ntags: [demo]\n---\nThis is the body.",
+            },
+          ],
+          {},
+        );
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({})
+          .expect(200);
+        expect(res.body.results[0].frontmatterExcerpt).toBe("type: hub tags: [demo]");
+        expect(res.body.results[0].contentExcerpt).toBe("This is the body.");
+      });
+
+      test("leaves frontmatterExcerpt empty when file has no frontmatter", async () => {
+        setupGraphFixture(
+          [{ path: "no-fm.md", content: "Just body text" }],
+          {},
+        );
+        const res = await request(server)
+          .post("/graph/orphans/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({})
+          .expect(200);
+        expect(res.body.results[0].frontmatterExcerpt).toBe("");
+        expect(res.body.results[0].contentExcerpt).toBe("Just body text");
+      });
+    });
+
+    describe("/graph/neighborhood/", () => {
+      test("returns notes within N hops, ordered by distance", async () => {
+        setupGraphFixture(
+          [
+            { path: "center.md", content: "center" },
+            { path: "h1a.md", content: "hop1a" },
+            { path: "h1b.md", content: "hop1b" },
+            { path: "h2.md", content: "hop2" },
+            { path: "h3.md", content: "hop3" },
+          ],
+          {
+            "center.md": ["h1a.md"],
+            "h1a.md": ["h2.md"],
+            "h1b.md": ["center.md"],
+            "h2.md": ["h3.md"],
+          },
+        );
+
+        const res = await request(server)
+          .post("/graph/neighborhood/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ path: "center.md", hops: 2 })
+          .expect(200);
+
+        const byPath = new Map<string, number>(
+          res.body.results.map((r: { path: string; distance: number }) => [r.path, r.distance]),
+        );
+        expect(byPath.get("h1a.md")).toBe(1);
+        expect(byPath.get("h1b.md")).toBe(1); // via backlink
+        expect(byPath.get("h2.md")).toBe(2);
+        expect(byPath.has("h3.md")).toBe(false); // 3 hops away
+        expect(byPath.has("center.md")).toBe(false); // center excluded
+      });
+
+      test("includeBacklinks=false only follows outbound links", async () => {
+        setupGraphFixture(
+          [
+            { path: "center.md", content: "center" },
+            { path: "outbound.md", content: "outbound" },
+            { path: "inbound.md", content: "inbound" },
+          ],
+          {
+            "center.md": ["outbound.md"],
+            "inbound.md": ["center.md"],
+          },
+        );
+
+        const res = await request(server)
+          .post("/graph/neighborhood/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ path: "center.md", hops: 2, includeBacklinks: false })
+          .expect(200);
+
+        const paths = res.body.results.map((r: { path: string }) => r.path);
+        expect(paths).toContain("outbound.md");
+        expect(paths).not.toContain("inbound.md");
+      });
+
+      test("returns 404 when the center note does not exist", async () => {
+        setupGraphFixture([{ path: "a.md" }], {});
+        await request(server)
+          .post("/graph/neighborhood/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ path: "missing.md" })
+          .expect(404);
+      });
+
+      test("rejects hops > 4", async () => {
+        setupGraphFixture([{ path: "a.md" }], {});
+        await request(server)
+          .post("/graph/neighborhood/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ path: "a.md", hops: 5 })
+          .expect(400);
+      });
+
+      test("rejects missing path", async () => {
+        setupGraphFixture([{ path: "a.md" }], {});
+        await request(server)
+          .post("/graph/neighborhood/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({})
+          .expect(400);
+      });
+    });
+
+    describe("/graph/hubs/", () => {
+      test("returns notes ordered by inbound count descending", async () => {
+        setupGraphFixture(
+          [
+            { path: "hub.md", content: "many inbound" },
+            { path: "medium.md", content: "some inbound" },
+            { path: "a.md" },
+            { path: "b.md" },
+            { path: "c.md" },
+          ],
+          {
+            "a.md": ["hub.md"],
+            "b.md": ["hub.md", "medium.md"],
+            "c.md": ["hub.md"],
+          },
+        );
+
+        const res = await request(server)
+          .post("/graph/hubs/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({})
+          .expect(200);
+
+        expect(res.body.results[0]).toMatchObject({ path: "hub.md", inboundCount: 3 });
+        expect(res.body.results[1]).toMatchObject({ path: "medium.md", inboundCount: 1 });
+      });
+
+      test("excludes notes with zero inbound links", async () => {
+        setupGraphFixture(
+          [
+            { path: "linked.md" },
+            { path: "linker.md" },
+            { path: "alone.md" },
+          ],
+          { "linker.md": ["linked.md"] },
+        );
+        const res = await request(server)
+          .post("/graph/hubs/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({})
+          .expect(200);
+        const paths = res.body.results.map((r: { path: string }) => r.path);
+        expect(paths).toEqual(["linked.md"]);
+      });
+
+      test("excludeFromGraph hides links that would otherwise contribute to hub status", async () => {
+        setupGraphFixture(
+          [
+            { path: "candidate.md" },
+            { path: "journal/d1.md" },
+            { path: "journal/d2.md" },
+          ],
+          {
+            "journal/d1.md": ["candidate.md"],
+            "journal/d2.md": ["candidate.md"],
+          },
+        );
+        const res = await request(server)
+          .post("/graph/hubs/")
+          .set("Authorization", `Bearer ${API_KEY}`)
+          .set("Content-Type", "application/json")
+          .send({ excludeFromGraph: ["journal/**"] })
+          .expect(200);
+        // With journal noise removed, candidate.md has no inbound links and isn't a hub
+        expect(res.body.results).toHaveLength(0);
+      });
+    });
+  });
+
   describe("apiExtensions", () => {
     test("addMcpTool registers a tool via McpHandler", () => {
       const extManifest = Object.assign(new PluginManifest(), { id: "test-plugin" });

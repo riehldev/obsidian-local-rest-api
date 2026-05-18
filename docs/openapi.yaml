@@ -12,6 +12,46 @@ components:
           example: "A brief description of the error."
           type: "string"
       type: "object"
+    GraphNeighborResult:
+      allOf:
+        - "$ref": "#/components/schemas/GraphNoteResult"
+        - properties:
+            distance:
+              description: "Number of hops from the center note (1..hops)."
+              type: "number"
+          required:
+            - "distance"
+          type: "object"
+    GraphNoteResult:
+      properties:
+        contentExcerpt:
+          description: "Up to ~100 chars of the markdown body following any frontmatter, whitespace-collapsed."
+          type: "string"
+        frontmatterExcerpt:
+          description: "Up to ~100 chars of the YAML frontmatter body, whitespace-collapsed. Empty if the note has no frontmatter."
+          type: "string"
+        inboundCount:
+          description: "Number of notes that link to this note (after applying excludeFromGraph)."
+          type: "number"
+        outboundCount:
+          description: "Number of notes this note links to (after applying excludeFromGraph)."
+          type: "number"
+        path:
+          description: "Vault-relative path of the note."
+          type: "string"
+        tags:
+          description: "Tag names without leading `#`."
+          items:
+            type: "string"
+          type: "array"
+      required:
+        - "path"
+        - "inboundCount"
+        - "outboundCount"
+        - "tags"
+        - "frontmatterExcerpt"
+        - "contentExcerpt"
+      type: "object"
     NoteJson:
       properties:
         backlinks:
@@ -876,6 +916,256 @@ paths:
         Execute a command.
       tags:
         - "Commands"
+  /graph/hubs/:
+    post:
+      description: |
+        Return the top notes by inbound link count — useful for finding the de facto hubs of the vault (notes that lots of other notes link to). This often surfaces concepts that have grown into hubs without ever being formally declared as such.
+        
+        Results are sorted by `inboundCount` descending, then by `path` ascending for stability across identical counts. Notes with zero inbound links are never returned regardless of `maxResults`.
+        
+        All graph endpoints operate over Obsidian's pre-indexed link graph (`metadataCache.resolvedLinks`). Each returned note carries `inboundCount`, `outboundCount`, `tags`, and two short excerpts:
+        
+        - `frontmatterExcerpt` — up to ~100 characters of the YAML frontmatter body (whitespace-collapsed; empty if the file has no frontmatter).
+        - `contentExcerpt` — up to ~100 characters of the markdown body following any frontmatter (whitespace-collapsed).
+        
+        The two excerpts are returned separately because frontmatter is identity-bearing for some notes (Atlas hubs, structured data) and noise for others.
+        
+        ### `excludeResults` vs `excludeFromGraph`
+        
+        Both parameters take an array of glob patterns. Their semantics are intentionally distinct:
+        
+        - **`excludeResults`** — paths matching these patterns are not returned in the result list, but they remain part of the graph. Their outbound links still contribute to other notes' `inboundCount`. Use this to hide notes from suggestions while still acknowledging that being linked from them counts.
+        - **`excludeFromGraph`** — paths matching these patterns are treated as if they did not exist. They cannot appear in results, and they do not contribute to any other note's `inboundCount` or `outboundCount`. Use this to remove noise sources (e.g. `["02 Journal/**"]` to ignore journal-only links when scoring orphan candidates).
+      requestBody:
+        content:
+          application/json:
+            examples:
+              ignoring_journal:
+                summary: "Top hubs after ignoring journal noise."
+                value:
+                  excludeFromGraph:
+                    - "02 Journal/**"
+              top_20:
+                summary: "Top 20 hubs across the vault."
+                value: {}
+            schema:
+              properties:
+                excludeFromGraph:
+                  items:
+                    type: "string"
+                  type: "array"
+                excludeResults:
+                  items:
+                    type: "string"
+                  type: "array"
+                maxResults:
+                  default: 20
+                  type: "number"
+              type: "object"
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  results:
+                    items:
+                      "$ref": "#/components/schemas/GraphNoteResult"
+                    type: "array"
+                type: "object"
+          description: "Success."
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Invalid parameter."
+      summary: |
+        Return the top notes by inbound link count.
+      tags:
+        - "Graph"
+  /graph/neighborhood/:
+    post:
+      description: |
+        Return notes within N hops of a given center note in the link graph — useful for finding notes thematically near a starting point so you can decide what to link.
+        
+        Results are ordered by hop distance ascending, then by traversal order. The center note itself is not returned. Each result carries a `distance` field (1..hops) indicating how many hops from the center it sits at.
+        
+        When `includeBacklinks` is `true` (default), the graph is traversed as **undirected** — both outgoing links and backlinks count as edges. When `false`, only outgoing links are followed. For "what could I link to from here," undirected is usually correct, since being linked from another note is equally strong signal that two notes belong near each other.
+        
+        All graph endpoints operate over Obsidian's pre-indexed link graph (`metadataCache.resolvedLinks`). Each returned note carries `inboundCount`, `outboundCount`, `tags`, and two short excerpts:
+        
+        - `frontmatterExcerpt` — up to ~100 characters of the YAML frontmatter body (whitespace-collapsed; empty if the file has no frontmatter).
+        - `contentExcerpt` — up to ~100 characters of the markdown body following any frontmatter (whitespace-collapsed).
+        
+        The two excerpts are returned separately because frontmatter is identity-bearing for some notes (Atlas hubs, structured data) and noise for others.
+        
+        ### `excludeResults` vs `excludeFromGraph`
+        
+        Both parameters take an array of glob patterns. Their semantics are intentionally distinct:
+        
+        - **`excludeResults`** — paths matching these patterns are not returned in the result list, but they remain part of the graph. Their outbound links still contribute to other notes' `inboundCount`. Use this to hide notes from suggestions while still acknowledging that being linked from them counts.
+        - **`excludeFromGraph`** — paths matching these patterns are treated as if they did not exist. They cannot appear in results, and they do not contribute to any other note's `inboundCount` or `outboundCount`. Use this to remove noise sources (e.g. `["02 Journal/**"]` to ignore journal-only links when scoring orphan candidates).
+      requestBody:
+        content:
+          application/json:
+            examples:
+              basic:
+                summary: "Two-hop undirected neighborhood."
+                value:
+                  path: "01 Atlas/Concepts/The Open Palm.md"
+              forward_only:
+                summary: "Three-hop outbound-only traversal."
+                value:
+                  hops: 3
+                  includeBacklinks: false
+                  path: "01 Atlas/Concepts/The Hunger.md"
+            schema:
+              properties:
+                excludeFromGraph:
+                  items:
+                    type: "string"
+                  type: "array"
+                excludeResults:
+                  items:
+                    type: "string"
+                  type: "array"
+                hops:
+                  default: 2
+                  description: "Number of link-hops to traverse outward."
+                  maximum: 4
+                  minimum: 1
+                  type: "number"
+                includeBacklinks:
+                  default: true
+                  description: "Treat the graph as undirected if true."
+                  type: "boolean"
+                maxResults:
+                  default: 50
+                  type: "number"
+                path:
+                  description: "Vault-relative path of the center note."
+                  type: "string"
+              required:
+                - "path"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  results:
+                    items:
+                      "$ref": "#/components/schemas/GraphNeighborResult"
+                    type: "array"
+                type: "object"
+          description: "Success."
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Invalid parameter."
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Center note does not exist."
+      summary: |
+        Return notes within N hops of a given center note.
+      tags:
+        - "Graph"
+  /graph/orphans/:
+    post:
+      description: |
+        Find notes with few inbound and/or outbound links — useful for surfacing link candidates and underused notes when building out a vault's graph.
+        
+        By default, returns strict orphans (notes with zero inbound links AND zero outbound links). Raise `minInbound` / `minOutbound` to find near-orphans:
+        
+        - `minInbound: 0, minOutbound: 2` → notes with outgoing links that nothing links back to.
+        - `minInbound: 2, minOutbound: 0` → notes that are linked from elsewhere but link nowhere.
+        
+        The thresholds are **inclusive maxima**: a note is returned only if `inboundCount <= minInbound` AND `outboundCount <= minOutbound`. Raising a threshold makes the filter looser.
+        
+        All graph endpoints operate over Obsidian's pre-indexed link graph (`metadataCache.resolvedLinks`). Each returned note carries `inboundCount`, `outboundCount`, `tags`, and two short excerpts:
+        
+        - `frontmatterExcerpt` — up to ~100 characters of the YAML frontmatter body (whitespace-collapsed; empty if the file has no frontmatter).
+        - `contentExcerpt` — up to ~100 characters of the markdown body following any frontmatter (whitespace-collapsed).
+        
+        The two excerpts are returned separately because frontmatter is identity-bearing for some notes (Atlas hubs, structured data) and noise for others.
+        
+        ### `excludeResults` vs `excludeFromGraph`
+        
+        Both parameters take an array of glob patterns. Their semantics are intentionally distinct:
+        
+        - **`excludeResults`** — paths matching these patterns are not returned in the result list, but they remain part of the graph. Their outbound links still contribute to other notes' `inboundCount`. Use this to hide notes from suggestions while still acknowledging that being linked from them counts.
+        - **`excludeFromGraph`** — paths matching these patterns are treated as if they did not exist. They cannot appear in results, and they do not contribute to any other note's `inboundCount` or `outboundCount`. Use this to remove noise sources (e.g. `["02 Journal/**"]` to ignore journal-only links when scoring orphan candidates).
+      requestBody:
+        content:
+          application/json:
+            examples:
+              near_orphans_ignoring_journal:
+                summary: "Notes with up to 1 link in either direction, ignoring journal noise."
+                value:
+                  excludeFromGraph:
+                    - "02 Journal/**"
+                  minInbound: 1
+                  minOutbound: 1
+              strict_orphans:
+                summary: "Strict orphans (default)."
+                value: {}
+            schema:
+              properties:
+                excludeFromGraph:
+                  description: "Glob patterns: remove matching paths from the graph entirely (no inbound/outbound contribution)."
+                  items:
+                    type: "string"
+                  type: "array"
+                excludeResults:
+                  description: "Glob patterns: hide matching paths from results but keep them in the graph."
+                  items:
+                    type: "string"
+                  type: "array"
+                maxResults:
+                  default: 50
+                  description: "Maximum number of results to return."
+                  type: "number"
+                minInbound:
+                  default: 0
+                  description: "Maximum allowed inbound link count for a note to be considered an orphan. 0 = strict."
+                  type: "number"
+                minOutbound:
+                  default: 0
+                  description: "Maximum allowed outbound link count for a note to be considered an orphan. 0 = strict."
+                  type: "number"
+              type: "object"
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  results:
+                    items:
+                      "$ref": "#/components/schemas/GraphNoteResult"
+                    type: "array"
+                type: "object"
+          description: "Success."
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Invalid parameter."
+      summary: |
+        Find orphan and near-orphan notes by link count.
+      tags:
+        - "Graph"
   /mcp/:
     get:
       description: |
@@ -3796,6 +4086,7 @@ tags:
   - name: "Periodic Notes"
   - name: "Vault Directories"
   - name: "Search"
+  - name: "Graph"
   - name: "Commands"
   - name: "Open"
   - name: "System"

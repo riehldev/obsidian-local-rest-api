@@ -508,5 +508,134 @@ export class McpHandler {
         return this.text({ message: "OK" });
       },
     );
+
+    const excludeResultsDescription =
+      "Glob patterns for paths to exclude from results only. Notes matching these patterns are still " +
+      "counted when computing inbound/outbound link totals for other notes — they are just not returned " +
+      "in the result list. Use this to hide certain notes from suggestions while still acknowledging " +
+      "that being linked from them counts.";
+    const excludeFromGraphDescription =
+      "Glob patterns for paths to remove from the graph entirely. Notes matching these patterns are " +
+      "treated as if they did not exist: they cannot appear in results, links FROM them do not count " +
+      "toward any note's inbound total, and links TO them do not count toward any note's outbound total. " +
+      "Use this to ignore noise sources (e.g. ['02 Journal/**'] to make journal-only links not count " +
+      "as inbound links).";
+    const graphNoteResultShape =
+      "Each result is an object with: path (vault-relative), inboundCount, outboundCount, tags " +
+      "(array of tag names without leading '#'), frontmatterExcerpt (up to ~100 chars of the YAML " +
+      "frontmatter body, whitespace-collapsed; empty string if no frontmatter), and contentExcerpt " +
+      "(up to ~100 chars of the markdown body following any frontmatter, whitespace-collapsed). " +
+      "The two excerpts are returned separately because frontmatter is identity-bearing for some " +
+      "notes and noise for others.";
+
+    this.tool(
+      "graph_orphans",
+      "Find notes with few inbound and/or outbound links — useful for surfacing link candidates and " +
+        "underused notes in the vault. Returns an array of notes under a 'results' key.\n\n" +
+        "By default, returns strict orphans (notes with zero inbound links AND zero outbound links). " +
+        "Raise minInbound / minOutbound to find near-orphans (e.g. minInbound=0, minOutbound=2 finds " +
+        "notes with outgoing links that nothing links back to). The thresholds are inclusive maxima: " +
+        "a note is returned only if inboundCount <= minInbound AND outboundCount <= minOutbound.\n\n" +
+        graphNoteResultShape,
+      {
+        maxResults: z.number().int().positive().optional()
+          .describe("Maximum number of results to return (default: 50)"),
+        minInbound: z.number().int().nonnegative().optional()
+          .describe("Maximum allowed inbound link count for a note to be considered an orphan. " +
+            "0 (default) = strict — must have no backlinks."),
+        minOutbound: z.number().int().nonnegative().optional()
+          .describe("Maximum allowed outbound link count for a note to be considered an orphan. " +
+            "0 (default) = strict — must have no outgoing links."),
+        excludeResults: z.array(z.string()).optional().describe(excludeResultsDescription),
+        excludeFromGraph: z.array(z.string()).optional().describe(excludeFromGraphDescription),
+      },
+      async (args: {
+        maxResults?: number;
+        minInbound?: number;
+        minOutbound?: number;
+        excludeResults?: string[];
+        excludeFromGraph?: string[];
+      }) => {
+        const results = await this.ops.graphOrphans({
+          maxResults: args.maxResults ?? 50,
+          minInbound: args.minInbound ?? 0,
+          minOutbound: args.minOutbound ?? 0,
+          excludeResults: args.excludeResults ?? [],
+          excludeFromGraph: args.excludeFromGraph ?? [],
+        });
+        return this.text({ results });
+      },
+    );
+
+    this.tool(
+      "graph_neighborhood",
+      "Return notes within N hops of a given center note in the link graph — useful for finding " +
+        "notes thematically near a starting point so you can decide what to link. Results are " +
+        "ordered by hop distance ascending, then by traversal order. The center note itself is " +
+        "not included. Returns an array of notes under a 'results' key.\n\n" +
+        "When includeBacklinks is true (default), the graph is traversed as undirected — both " +
+        "outgoing links and backlinks count as edges. When false, only outgoing links are " +
+        "traversed. For 'what could I link to from here', undirected is usually correct.\n\n" +
+        graphNoteResultShape +
+        " Each result additionally has a 'distance' field (1..hops) indicating how many hops from " +
+        "the center it sits at.",
+      {
+        path: z.string().describe("Vault-relative path of the center note. Required."),
+        hops: z.number().int().min(1).max(4).optional()
+          .describe("Number of hops to traverse outward from the center note (default: 2, max: 4)"),
+        includeBacklinks: z.boolean().optional()
+          .describe("If true (default), treat the graph as undirected — backlinks count as edges. " +
+            "If false, only follow outbound links."),
+        maxResults: z.number().int().positive().optional()
+          .describe("Maximum number of results to return (default: 50)"),
+        excludeResults: z.array(z.string()).optional().describe(excludeResultsDescription),
+        excludeFromGraph: z.array(z.string()).optional().describe(excludeFromGraphDescription),
+      },
+      async (args: {
+        path: string;
+        hops?: number;
+        includeBacklinks?: boolean;
+        maxResults?: number;
+        excludeResults?: string[];
+        excludeFromGraph?: string[];
+      }) => {
+        const results = await this.ops.graphNeighborhood({
+          path: args.path,
+          hops: args.hops ?? 2,
+          includeBacklinks: args.includeBacklinks ?? true,
+          maxResults: args.maxResults ?? 50,
+          excludeResults: args.excludeResults ?? [],
+          excludeFromGraph: args.excludeFromGraph ?? [],
+        });
+        return this.text({ results });
+      },
+    );
+
+    this.tool(
+      "graph_hubs",
+      "Return the top notes by inbound link count — useful for finding the de facto hubs of the " +
+        "vault (notes that lots of other notes link to). Results are sorted by inboundCount " +
+        "descending, then by path ascending for stability. Notes with zero inbound links are " +
+        "never returned. Returns an array of notes under a 'results' key.\n\n" +
+        graphNoteResultShape,
+      {
+        maxResults: z.number().int().positive().optional()
+          .describe("Maximum number of hubs to return (default: 20)"),
+        excludeResults: z.array(z.string()).optional().describe(excludeResultsDescription),
+        excludeFromGraph: z.array(z.string()).optional().describe(excludeFromGraphDescription),
+      },
+      async (args: {
+        maxResults?: number;
+        excludeResults?: string[];
+        excludeFromGraph?: string[];
+      }) => {
+        const results = await this.ops.graphHubs({
+          maxResults: args.maxResults ?? 20,
+          excludeResults: args.excludeResults ?? [],
+          excludeFromGraph: args.excludeFromGraph ?? [],
+        });
+        return this.text({ results });
+      },
+    );
   }
 }
