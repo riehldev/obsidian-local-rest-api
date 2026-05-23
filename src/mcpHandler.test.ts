@@ -91,9 +91,6 @@ function makeMockOps() {
     searchJsonLogic: jest
       .fn()
       .mockResolvedValue([{ filename: "a.md", result: true }]),
-    simpleSearch: jest
-      .fn()
-      .mockResolvedValue([{ filename: "a.md", score: 1, matches: [] }]),
     getAllTags: jest.fn().mockReturnValue([{ name: "todo", count: 3 }]),
     listCommands: jest
       .fn()
@@ -195,8 +192,8 @@ describe("McpHandler", () => {
 
   // ---- tool registration --------------------------------------------------
 
-  test("registers all 19 tools", () => {
-    expect(mockTool).toHaveBeenCalledTimes(19);
+  test("registers all 18 tools", () => {
+    expect(mockTool).toHaveBeenCalledTimes(18);
     const names = mockTool.mock.calls.map((c: unknown[]) => c[0]);
     expect(names).toEqual(
       expect.arrayContaining([
@@ -210,7 +207,6 @@ describe("McpHandler", () => {
         "active_file_get_path",
         "periodic_note_get_path",
         "search_query",
-        "search_simple",
         "tag_list",
         "command_list",
         "command_execute",
@@ -498,17 +494,6 @@ describe("McpHandler", () => {
     const query = { in: ["myTag", { var: "tags" }] };
     const result = await cb({ query });
     expect(ops.searchJsonLogic).toHaveBeenCalledWith(query);
-    expect(parseText(result)).toEqual(
-      expect.arrayContaining([expect.objectContaining({ filename: "a.md" })]),
-    );
-  });
-
-  // ---- search_simple ------------------------------------------------------
-
-  test("search_simple calls simpleSearch and returns results", async () => {
-    const cb = getToolCallback("search_simple");
-    const result = await cb({ query: "hello", contextLength: 50 });
-    expect(ops.simpleSearch).toHaveBeenCalledWith("hello", 50);
     expect(parseText(result)).toEqual(
       expect.arrayContaining([expect.objectContaining({ filename: "a.md" })]),
     );

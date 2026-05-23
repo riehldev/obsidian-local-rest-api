@@ -272,7 +272,6 @@ The exact config syntax varies by client; see the [Quick start](#mcp-clients) ex
 | `active_file_get_path` | Return the vault path of the file currently open in Obsidian |
 | `periodic_note_get_path` | Return the vault path of the current periodic note (`daily`, `weekly`, `monthly`, `quarterly`, `yearly`) |
 | `search_query` | Search using a [JsonLogic](https://jsonlogic.com/) query against note metadata |
-| `search_simple` | Full-text search using Obsidian's built-in search |
 | `graph_orphans` | Find orphan and near-orphan notes by inbound/outbound link count |
 | `graph_neighborhood` | Return notes within N hops of a given center note in the link graph |
 | `graph_hubs` | Return the top notes in the vault by inbound link count |

@@ -438,24 +438,6 @@ export class McpHandler {
     );
 
     this.tool(
-      "search_simple",
-      "Search vault files using Obsidian's built-in simple search. " +
-        "Returns an array of {filename, score, matches} objects sorted by relevance score. " +
-        "Each match includes the matched text and surrounding context characters (controlled by contextLength).",
-      {
-        query: z.string().describe("Search query string"),
-        contextLength: z
-          .number()
-          .optional()
-          .describe("Number of characters of surrounding context to return per match (default: 100)"),
-      },
-      async ({ query, contextLength }: { query: string; contextLength?: number }) => {
-        const results = await this.ops.simpleSearch(query, contextLength);
-        return this.text(results);
-      },
-    );
-
-    this.tool(
       "tag_list",
       "Return all tags used across the vault, each with a usage count. " +
         "Tag names do not include the leading '#'. " +
